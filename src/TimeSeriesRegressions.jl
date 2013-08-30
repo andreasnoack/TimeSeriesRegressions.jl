@@ -7,7 +7,7 @@ import Distributions: loglikelihood
 import Stats: coeftable
 import Civecm: residuals
 
-export adf, adl, ecm
+export adf, adl, ecm, ecmI2
 
 # General methods
 dot(x::AbstractVector) = dot(x,x)
@@ -158,7 +158,93 @@ function show(io::IO, obj::ECM)
 end
 
 function adf(fitA::ECM)
-	fit0 = adl(diff(fitA.endogenous), diff(fitA.exogenous), fitA.lags - 1)
+	iT 		= size(fitA.endogenous, 1) - 1
+	kexo 	= size(fitA.exogenous, 2)
+	ddendo 	= Array(Float64, iT)
+	ddexo 	= Array(Float64, iT, kexo)
+	for i = 1:iT
+		ddendo[i] = fitA.endogenous[i + 1] - fitA.endogenous[i]
+	end
+	for j = 1:kexo
+		for i = 1:iT
+			ddexo[i,j] = fitA.exogenous[i + 1,j] - fitA.exogenous[i,j]
+		end
+	end
+	fit0 	= adl(ddendo, ddexo, fitA.lags - 1)
+	return 2*(loglikelihood(fitA) - loglikelihood(fit0))
+end
+
+# ECMI2 type
+type ECMI2 <: UnivariateRegressionModel
+	endogenous::Vector{Float64}
+	exogenous::Matrix{Float64}
+	lags::Int64
+	parest::Vector{Float64}
+	response::Vector{Float64}
+	predictor::Matrix{Float64}
+	predfact::QRPivoted{Float64}
+end
+
+## Constructors
+function ecmI2(endogenous::Vector{Float64}, exogenous::Matrix{Float64}, lags::Integer)
+	T = length(endogenous) - lags
+	dimexo = size(exogenous, 2)
+	if size(exogenous, 1) != T + lags error("Endogenous and exogenous variables must have same sample length") end
+	response = Array(Float64, T)
+	predictor = Array(Float64, T, lags + dimexo*(lags + 1))
+	# z2 = Array(Float64, T, lags - 1)
+	for i = 1:T
+		response[i] = endogenous[i+lags] - 2endogenous[i+lags-1] + endogenous[i+lags-2]
+		predictor[i,1] = endogenous[i+lags-1]
+		predictor[i,2] = endogenous[i+lags-1] - endogenous[i+lags-2]
+		cl = 3
+		for j = 1:lags - 2
+			predictor[i,cl] = endogenous[i+lags-j] - 2endogenous[i+lags-j-1] + endogenous[i+lags-j-2]
+			cl += 1
+		end
+		if dimexo > 0
+			for k = 1:dimexo
+				predictor[i,cl] = exogenous[i+lags-1,k]
+				cl += 1
+			end
+			for k = 1:dimexo
+				predictor[i,cl] = exogenous[i+lags-1,k] - exogenous[i+lags-2,k]
+				cl += 1
+			end
+			for j = 0:lags - 2
+				for k = 1:dimexo
+					predictor[i,cl] = exogenous[i+lags-j,k] - 2exogenous[i+lags-j-1,k] + exogenous[i+lags-j-1,k]
+					cl += 1
+				end
+			end
+		end
+	end
+	fit = regress(response, predictor)
+	return ECMI2(endogenous, exogenous, lags, fit.parest, response, predictor, fit.predfact)
+end
+ecmI2(endogenous::Vector{Float64}, lags::Integer) = ecmI2(endogenous, zeros(length(endogenous), 0), lags)
+
+## Other methods
+
+function show(io::IO, obj::ECMI2)
+	println("Estimates t-stat")
+	println(coeftable(obj))
+end
+
+function adf(fitA::ECMI2)
+	iT 		= size(fitA.endogenous, 1) - 2
+	kexo 	= size(fitA.exogenous, 2)
+	ddendo 	= Array(Float64, iT)
+	ddexo 	= Array(Float64, iT, kexo)
+	for i = 1:iT
+		ddendo[i] = fitA.endogenous[i + 2] - 2fitA.endogenous[i + 1] + fitA.endogenous[i]
+	end
+	for j = 1:kexo
+		for i = 1:iT
+			ddexo[i,j] = fitA.exogenous[i + 2,j] - 2fitA.exogenous[i + 1,j] + fitA.exogenous[i,j]
+		end
+	end
+	fit0 	= adl(ddendo, ddexo, fitA.lags - 2)
 	return 2*(loglikelihood(fitA) - loglikelihood(fit0))
 end
 end #module
