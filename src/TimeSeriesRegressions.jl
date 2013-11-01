@@ -4,7 +4,7 @@ module TimeSeriesRegressions
 
 import Base:show, LinAlg.dot
 import Distributions: loglikelihood
-import Stats: coeftable
+import Stats: coeftable, vcov
 import Civecm: residuals
 
 export adf, adl, ecm, ecmI2
